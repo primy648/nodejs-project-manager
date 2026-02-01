@@ -1,0 +1,35 @@
+{
+  "name": "nodejs-project-manager",
+  "version": "1.0.0",
+  "description": "Outil de gestion de projets Node.js pour Ubuntu 22.04 avec SFTP sécurisé",
+  "main": "src/index.js",
+  "type": "module",
+  "bin": {
+    "project-manager": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.2.12",
+    "ora": "^8.0.1",
+    "cli-table3": "^0.6.3",
+    "boxen": "^7.1.1",
+    "figlet": "^1.7.0"
+  },
+  "keywords": [
+    "nodejs",
+    "pm2",
+    "sftp",
+    "ubuntu",
+    "project-manager",
+    "devops"
+  ],
+  "author": "",
+  "license": "MIT"
+}
