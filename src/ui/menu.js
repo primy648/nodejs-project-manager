@@ -413,8 +413,15 @@ async function addServiceForm(projectName) {
         },
         {
             type: 'input',
+            name: 'setupCommands',
+            message: 'Commandes de setup (séparées par ;, ex: npm install):',
+            default: '',
+            filter: (input) => input ? input.split(';').map(c => c.trim()).filter(c => c) : []
+        },
+        {
+            type: 'input',
             name: 'command',
-            message: 'Commande de démarrage:',
+            message: 'Commande de démarrage (PM2):',
             default: 'npm start',
             validate: (input) => input && input.trim() !== '' ? true : 'La commande est requise'
         },
@@ -443,6 +450,7 @@ async function addServiceForm(projectName) {
         services.addService(projectName, {
             name: answers.name,
             directory: answers.directory,
+            setupCommands: answers.setupCommands,
             command: answers.command,
             description: answers.description
         });
@@ -474,10 +482,14 @@ async function selectService(projectName, message = 'Sélectionner un service:')
             name: 'serviceName',
             message,
             choices: [
-                ...servicesList.map(s => ({
-                    name: `${s.name} (${s.command})`,
-                    value: s.name
-                })),
+                ...servicesList.map(s => {
+                    const setupCount = (s.setupCommands || []).length;
+                    const setupInfo = setupCount > 0 ? ` [${setupCount} setup cmd]` : '';
+                    return {
+                        name: `${s.name} (${s.command})${chalk.gray(setupInfo)}`,
+                        value: s.name
+                    };
+                }),
                 new inquirer.Separator(),
                 { name: '← Annuler', value: null }
             ]
@@ -494,10 +506,52 @@ async function startServiceAction(projectName) {
     const serviceName = await selectService(projectName, 'Service à démarrer:');
     if (!serviceName) return;
 
+    const service = services.getService(projectName, serviceName);
+    const hasSetupCommands = (service.setupCommands || []).length > 0;
+
+    let runSetup = true;
+    if (hasSetupCommands) {
+        const { setupChoice } = await inquirer.prompt([
+            {
+                type: 'list',
+                name: 'setupChoice',
+                message: `Ce service a ${service.setupCommands.length} commande(s) de setup:`,
+                choices: [
+                    { name: '▶️  Exécuter setup + démarrer', value: 'with_setup' },
+                    { name: '⏩  Démarrer sans setup', value: 'skip_setup' },
+                    { name: '🛠️  Exécuter setup seulement', value: 'setup_only' },
+                    { name: '← Annuler', value: 'cancel' }
+                ]
+            }
+        ]);
+
+        if (setupChoice === 'cancel') return;
+        runSetup = setupChoice === 'with_setup' || setupChoice === 'setup_only';
+
+        if (setupChoice === 'setup_only') {
+            const spinner = ora(`Exécution du setup pour ${serviceName}...`).start();
+            try {
+                for (const cmd of service.setupCommands) {
+                    spinner.text = `Exécution: ${cmd}`;
+                    const shell = (await import('../utils/shell.js')).default;
+                    await shell.execCommand(cmd, { cwd: service.directory });
+                }
+                spinner.succeed(`Setup terminé pour ${serviceName}`);
+            } catch (error) {
+                spinner.fail('Erreur');
+                logger.error(error.message);
+            }
+            await pressEnterToContinue();
+            return;
+        }
+
+        runSetup = setupChoice === 'with_setup';
+    }
+
     const spinner = ora(`Démarrage de ${serviceName}...`).start();
 
     try {
-        await services.startService(projectName, serviceName);
+        await services.startService(projectName, serviceName, runSetup);
         spinner.succeed(`${serviceName} démarré`);
     } catch (error) {
         spinner.fail('Erreur');
@@ -570,21 +624,37 @@ async function showServiceLogs(projectName) {
  * Démarrer tous les services
  */
 async function startAllServicesAction(projectName) {
-    const { confirm } = await inquirer.prompt([
+    const servicesList = services.listServices(projectName);
+    const hasAnySetup = servicesList.some(s => (s.setupCommands || []).length > 0);
+
+    const { setupChoice } = await inquirer.prompt([
         {
-            type: 'confirm',
-            name: 'confirm',
-            message: 'Démarrer tous les services ?',
-            default: true
+            type: 'list',
+            name: 'setupChoice',
+            message: hasAnySetup 
+                ? 'Certains services ont des commandes de setup. Que faire ?' 
+                : 'Démarrer tous les services ?',
+            choices: hasAnySetup ? [
+                { name: '▶️  Exécuter setup + démarrer tous', value: 'with_setup' },
+                { name: '⏩  Démarrer tous sans setup', value: 'skip_setup' },
+                { name: '← Annuler', value: 'cancel' }
+            ] : [
+                { name: '▶️  Démarrer tous les services', value: 'skip_setup' },
+                { name: '← Annuler', value: 'cancel' }
+            ]
         }
     ]);
 
-    if (!confirm) return;
+    if (setupChoice === 'cancel') return;
 
+    const runSetup = setupChoice === 'with_setup';
     const spinner = ora('Démarrage des services...').start();
 
     try {
-        await services.startAllServices(projectName);
+        for (const svc of servicesList) {
+            spinner.text = `Démarrage de ${svc.name}...`;
+            await services.startService(projectName, svc.name, runSetup);
+        }
         spinner.succeed('Tous les services démarrés');
     } catch (error) {
         spinner.fail('Erreur');
@@ -630,6 +700,7 @@ async function editServiceForm(projectName) {
     if (!serviceName) return;
 
     const service = services.getService(projectName, serviceName);
+    const currentSetupCommands = (service.setupCommands || []).join('; ');
 
     const answers = await inquirer.prompt([
         {
@@ -640,8 +711,15 @@ async function editServiceForm(projectName) {
         },
         {
             type: 'input',
+            name: 'setupCommands',
+            message: 'Commandes de setup (séparées par ;):',
+            default: currentSetupCommands,
+            filter: (input) => input ? input.split(';').map(c => c.trim()).filter(c => c) : []
+        },
+        {
+            type: 'input',
             name: 'command',
-            message: 'Nouvelle commande:',
+            message: 'Nouvelle commande de démarrage:',
             default: service.command
         },
         {
@@ -663,6 +741,7 @@ async function editServiceForm(projectName) {
     try {
         services.updateService(projectName, serviceName, {
             directory: answers.directory,
+            setupCommands: answers.setupCommands,
             command: answers.command,
             description: answers.description
         });

@@ -16,7 +16,7 @@ import logger from '../utils/logger.js';
  * @returns {object} - Service créé
  */
 export function addService(projectName, serviceConfig) {
-    const { name, directory, command, description } = serviceConfig;
+    const { name, directory, command, description, setupCommands } = serviceConfig;
 
     // Valider le nom du service
     if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
@@ -47,6 +47,7 @@ export function addService(projectName, serviceConfig) {
     const service = {
         name,
         directory: servicePath,
+        setupCommands: setupCommands || [],
         command: command || 'npm start',
         description: description || '',
         pm2Name: `${projectName}-${name}`,
@@ -125,6 +126,10 @@ export function updateService(projectName, serviceName, updates) {
     if (updates.command) {
         service.command = updates.command;
     }
+
+    if (updates.setupCommands !== undefined) {
+        service.setupCommands = updates.setupCommands;
+    }
     
     if (updates.description !== undefined) {
         service.description = updates.description;
@@ -160,12 +165,38 @@ export function listServices(projectName) {
 }
 
 /**
+ * Exécute les commandes de setup d'un service
+ * @param {object} service - Service
+ * @returns {Promise<void>}
+ */
+async function runSetupCommands(service) {
+    const setupCommands = service.setupCommands || [];
+    
+    if (setupCommands.length === 0) {
+        return;
+    }
+
+    logger.info(`Exécution des commandes de setup pour ${service.name}...`);
+
+    for (const cmd of setupCommands) {
+        logger.info(`  → ${cmd}`);
+        try {
+            await shell.execCommand(cmd, { cwd: service.directory });
+            logger.success(`  ✓ ${cmd}`);
+        } catch (error) {
+            throw new Error(`Erreur lors de l'exécution de "${cmd}": ${error.message}`);
+        }
+    }
+}
+
+/**
  * Démarre un service
  * @param {string} projectName - Nom du projet
  * @param {string} serviceName - Nom du service
+ * @param {boolean} runSetup - Exécuter les commandes de setup (défaut: true)
  * @returns {Promise<void>}
  */
-export async function startService(projectName, serviceName) {
+export async function startService(projectName, serviceName, runSetup = true) {
     const service = getService(projectName, serviceName);
     
     if (!service) {
@@ -175,6 +206,11 @@ export async function startService(projectName, serviceName) {
     // Vérifier si le dossier existe
     if (!fs.existsSync(service.directory)) {
         throw new Error(`Le dossier du service n'existe pas: ${service.directory}`);
+    }
+
+    // Exécuter les commandes de setup si demandé
+    if (runSetup) {
+        await runSetupCommands(service);
     }
 
     logger.info(`Démarrage du service ${serviceName}...`);
@@ -342,9 +378,10 @@ export async function getServiceLogs(projectName, serviceName, lines = 50) {
 /**
  * Démarre tous les services d'un projet
  * @param {string} projectName - Nom du projet
+ * @param {boolean} runSetup - Exécuter les commandes de setup (défaut: true)
  * @returns {Promise<void>}
  */
-export async function startAllServices(projectName) {
+export async function startAllServices(projectName, runSetup = true) {
     const services = listServices(projectName);
     
     if (services.length === 0) {
@@ -355,7 +392,7 @@ export async function startAllServices(projectName) {
 
     for (const service of services) {
         try {
-            await startService(projectName, service.name);
+            await startService(projectName, service.name, runSetup);
         } catch (error) {
             logger.error(`Erreur pour ${service.name}: ${error.message}`);
         }
